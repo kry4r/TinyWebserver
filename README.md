@@ -1,5 +1,6 @@
-# TinyWebServer
+# MangoWebServer
 
-请在Ubuntu上安装cmake编译
+Linux下基于C++17轻量级WebServer服务器
 
-可选安装Clion，开包即用，或是选择vscode
+- 实现账号驱动网盘存储功能
+- 实现账号驱动双人实时视频通话功能
