@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>disk</title>
+</head>
+<body>
+<h1>file upload</h1>
+<form id="uploadForm" enctype="multipart/form-data">
+    <input type="file" name="file" required>
+    <button type="button" onclick="uploadFile()">upload</button>
+    <button type="button" onclick="fetchFileList()">refresh</button>
+    <button type="button" onclick="downloadFile()'">download</button>
+</form>
+
+<h2>file list</h2>
+<ul id="fileList"></ul>
+
+<script>
+    function uploadFile() {
+        var formData = new FormData(document.getElementById('uploadForm'));
+        fetch('/upload', {
+            method: 'POST',
+            body: formData,
+        }).then(response => response.json())
+            .then(data => {
+                if(data.success) {
+                    alert('上传成功');
+                    fetchFileList(); // 重新获取文件列表
+                } else {
+                    alert('上传失败');
+                }
+            });
+    }
+    function downloadFile() {
+        fetch('/download', {
+            method: 'GET',
+        }).then(response => response.json())
+            .then(data => {
+                if(data.success) {
+                    alert('下载成功');
+                    fetchFileList(); // 重新获取文件列表
+                } else {
+                    alert('下载失败');
+                }
+            });
+    }
+
+    function fetchFileList() {
+        fetch('/listFiles')
+            .then(response => response.json())
+            .then(files => {
+                const fileList = document.getElementById('fileList');
+                fileList.innerHTML = ''; // 清空列表
+                files.forEach(file => {
+                    let li = document.createElement('li');
+                    li.textContent = file.name + ' (' + file.size + ')';
+                    fileList.appendChild(li);
+                });
+            });
+    }
+
+    // 页面加载完成时获取文件列表
+    document.addEventListener('DOMContentLoaded', fetchFileList);
+</script>
+</body>
+</html>

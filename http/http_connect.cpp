@@ -2,6 +2,11 @@
 #include <mysql/mysql.h>
 #include <mutex>
 #include <fstream>
+#include <future>
+#include <iostream>
+
+#include <map>
+#include <mutex>
 
 //定义http响应的一些状态信息
 const char *ok_200_title = "OK";
@@ -16,8 +21,63 @@ const char *error_500_form = "There was an unusual problem serving the request f
 
 std::mutex m_lock;
 map<string, string> users;
+unordered_map<string, std::vector<string>> usersfiles;
 int http_conn::m_user_count = 0;
 int http_conn::m_epollfd = -1;
+
+
+
+// 修改后的async_upload函数，添加缓存机制
+void http_conn::async_upload(const std::string& file_path) {
+    auto upload_task = std::async(std::launch::async, [file_path, this]() {
+        std::lock_guard<std::mutex> lock(cache_mutex);
+        // 检查缓存中是否已存在
+        if (file_cache.find(file_path) == file_cache.end()) {
+            std::ofstream file_stream(file_path, std::ios::out);
+            if (file_stream.is_open()) {
+                std::string content = "This is a test file to simulate file upload.";
+                file_stream << content;
+                file_stream.close();
+                // 添加到缓存
+                file_cache[file_path] = content;
+                std::cout << "File uploaded and cached successfully: " << file_path << std::endl;
+            } else {
+                std::cerr << "Failed to open file for upload: " << file_path << std::endl;
+            }
+        } else {
+            std::cout << "File is already in cache, no need to upload: " << file_path << std::endl;
+        }
+    });
+}
+
+// 修改后的async_download函数，添加缓存机制
+void http_conn::async_download(const std::string& file_path) {
+    auto download_task = std::async(std::launch::async, [file_path, this]() {
+        std::lock_guard<std::mutex> lock(cache_mutex);
+        // 检查缓存中是否存在
+        auto it = file_cache.find(file_path);
+        if (it != file_cache.end()) {
+            // 直接从缓存中读取
+            std::cout << "File downloaded from cache: " << file_path << std::endl;
+            std::cout << "Content: \n" << it->second << std::endl;
+        } else {
+            std::ifstream file_stream(file_path, std::ios::in);
+            if (file_stream.is_open()) {
+                std::string content((std::istreambuf_iterator<char>(file_stream)),
+                                    (std::istreambuf_iterator<char>()));
+                file_stream.close();
+                // 添加到缓存
+                file_cache[file_path] = content;
+                std::cout << "File downloaded and cached successfully: " << file_path << std::endl;
+                std::cout << "Content: \n" << content << std::endl;
+            } else {
+                std::cerr << "Failed to open file for download: " << file_path << std::endl;
+            }
+        }
+    });
+}
+
+
 //TODO::初始化连接池
 void http_conn::initmysql_result(connection_pool *connPool)
 {
@@ -44,6 +104,21 @@ void http_conn::initmysql_result(connection_pool *connPool)
         string temp2(row[1]);
         users[temp1] = temp2;
     }
+
+    //在user表中检索username，passwd数据，浏览器端输入
+    if (mysql_query(mysql, "SELECT username,file,file FROM user"))
+    {
+        LOG_ERROR("SELECT error:%s\n", mysql_error(mysql));
+    }
+    result = mysql_store_result(mysql);
+    fields = mysql_fetch_fields(result);
+    while (MYSQL_ROW row = mysql_fetch_row(result))
+    {
+        string temp1(row[0]);
+        string temp2(row[1]);
+        usersfiles[temp1].push_back(temp2);
+    }
+
 }
 void http_conn::pick_one_sql_connect(connection_pool* connPool)
 {
@@ -125,10 +200,10 @@ void http_conn::init(int sockfd, const sockaddr_in &addr, char *root, int TRIGMo
     this->m_close_log = close_log;
     
 
-    strcpy(this->sql_user, user.c_str());
-    strcpy(this->sql_passwd, passwd.c_str());
-    strcpy(this->sql_name, sqlname.c_str());
-    this->init();    
+    strcpy_s(this->sql_user, user.c_str());
+    strcpy_s(this->sql_passwd, passwd.c_str());
+    strcpy_s(this->sql_name, sqlname.c_str());
+    this->init();
 }
 
 //TODO::初始化新接受的连接
@@ -235,7 +310,7 @@ bool http_conn::read_once()
         }
         return true;
     }
-    return false;    
+    return false;
 }
 
 //TODO::解析http请求行，获得请求方法，目标url及http版本号
@@ -284,7 +359,7 @@ http_conn::HTTP_CODE http_conn::parse_request_line(char *text)
     //仅支持HTTP/1.1
     if (strcasecmp(m_version, "HTTP/1.1") != 0)
         return HTTP_CODE::BAD_REQUEST;
-    
+
     //对请求资源前7个字符进行判断
     //这里主要是有些报文的请求资源中会带有http://
     //这里需要对这种情况进行单独处理
@@ -307,7 +382,7 @@ http_conn::HTTP_CODE http_conn::parse_request_line(char *text)
     //当url为/时，显示欢迎界面
     if (strlen(m_url) == 1)
         strcat(m_url, "judge.html");
-    
+
     //请求行处理完毕，将主状态机转移处理请求头
     m_check_state = CHECK_STATE::CHECK_STATE_HEADER;
     return HTTP_CODE::NO_REQUEST;
@@ -427,7 +502,7 @@ http_conn::HTTP_CODE http_conn::process_read()
 //TODO::生成响应
 http_conn::HTTP_CODE http_conn::do_request()
 {
-    strcpy(m_real_file, doc_root);
+    strcpy_s(m_real_file, doc_root);
     int len = strlen(doc_root);
     printf("m_url:%s\n", m_url);
     const char *p = strrchr(m_url, '/');
@@ -474,7 +549,7 @@ http_conn::HTTP_CODE http_conn::do_request()
             {
                 //mysql = mysql_init(NULL);
                 //bool ok = false;
-                //ok = mysql_real_connect(mysql, "localhost", "root", "18861817269lwj", "webserDb", 3306, 0, NULL);                   
+                //ok = mysql_real_connect(mysql, "localhost", "root", "18861817269lwj", "webserDb", 3306, 0, NULL);
                 std::unique_lock<std::mutex> locker(m_lock);
                 int res = mysql_query(mysql, sql_insert);
                 users.insert(pair<string, string>(name, password));
@@ -538,6 +613,13 @@ http_conn::HTTP_CODE http_conn::do_request()
         strncpy(m_real_file + len, m_url_real, strlen(m_url_real));
         free(m_url_real);
     }
+    else if (*(p + 1) == '8')
+    {
+        char *m_url_real = (char *)malloc(sizeof(char) * 200);
+        strcpy(m_url_real, "/disk.html");
+        strncpy(m_real_file + len, m_url_real, strlen(m_url_real));
+        free(m_url_real);
+    }
     else
         strncpy(m_real_file + len, m_url, FILENAME_LEN - len - 1);
         //如果以上均不符合，即不是登录和注册，直接将url与网站目录拼接
@@ -548,7 +630,6 @@ http_conn::HTTP_CODE http_conn::do_request()
     {
         std::cout << "找不到该资源" << std::endl;
         return HTTP_CODE::NO_RESOURCE;
-
     }
         
 
@@ -760,6 +841,22 @@ bool http_conn::process_write(HTTP_CODE ret)
                 return false;
         }
     }
+        case: HTTP_CODE::UPLOAD_REQUEST
+        {
+            add_status_line(200, ok_200_title);
+            add_headers(strlen("File uploaded successfully!"));
+            if (!add_content("File uploaded successfully!"))
+                return false;
+            break;
+        }
+        case: HTTP_CODE::DOWNLOAD_REQUEST
+        {
+            add_status_line(200, ok_200_title);
+            add_headers(strlen("File downloaded successfully!"));
+            if (!add_content("File downloaded successfully!"))
+                return false;
+            break;
+        }
     default:
         return false;
     }

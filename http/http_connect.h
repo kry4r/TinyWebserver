@@ -66,6 +66,8 @@ public:
         NO_RESOURCE,
         FORBIDDEN_REQUEST,
         FILE_REQUEST,
+        UPLOAD_REQUEST,
+        DOWNLOAD_REQUEST,
         INTERNAL_ERROR,
         CLOSED_CONNECTION
     };
@@ -78,11 +80,14 @@ public:
         LINE_OPEN
     };
     static LINE_STATUS line_status;
+    std::map<std::string,std::string> file_cache;
+    std::mutex cache_mutex;
 
 public:
     http_conn() {}
     ~http_conn() {}
-
+    void async_upload(const std::string& file_path);
+    void async_download(const std::string& file_path);
 public:
     //初始化套接字
     void init(int sockfd, const sockaddr_in &addr, char *, int, int, string user, string passwd, string sqlname);
