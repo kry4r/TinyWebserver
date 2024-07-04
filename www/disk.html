@@ -9,7 +9,7 @@
     <input type="file" name="file" required>
     <button type="button" onclick="uploadFile()">upload</button>
     <button type="button" onclick="fetchFileList()">refresh</button>
-    <button type="button" onclick="downloadFile()'">download</button>
+    <button type="button" onclick="downloadSelectedFiles()">download</button>
 </form>
 
 <h2>file list</h2>
@@ -31,16 +31,25 @@
                 }
             });
     }
-    function downloadFile() {
+    function downloadSelectedFiles() {
+        const selectedFiles = document.querySelectorAll('#fileList input[type="checkbox"]:checked');
+        let filesToDownload = [];
+        selectedFiles.forEach(file => {
+            filesToDownload.push(file.value);
+        });
+        // Assuming the server can handle a list of filenames for batch download
         fetch('/download', {
-            method: 'GET',
+            method: 'POST', // Change to POST to send data
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({files: filesToDownload}),
         }).then(response => response.json())
             .then(data => {
                 if(data.success) {
-                    alert('下载成功');
-                    fetchFileList(); // 重新获取文件列表
+                    alert('批量下载成功');
                 } else {
-                    alert('下载失败');
+                    alert('批量下载失败');
                 }
             });
     }
@@ -50,10 +59,11 @@
             .then(response => response.json())
             .then(files => {
                 const fileList = document.getElementById('fileList');
-                fileList.innerHTML = ''; // 清空列表
+                fileList.innerHTML = ''; // Clear the list
                 files.forEach(file => {
                     let li = document.createElement('li');
-                    li.textContent = file.name + ' (' + file.size + ')';
+                    // Add a checkbox for each file
+                    li.innerHTML = `<input type="checkbox" name="file" value="${file.name}"> ${file.name} (${file.size})`;
                     fileList.appendChild(li);
                 });
             });

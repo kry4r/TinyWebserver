@@ -27,55 +27,105 @@ int http_conn::m_epollfd = -1;
 
 
 
-// 修改后的async_upload函数，添加缓存机制
 void http_conn::async_upload(const std::string& file_path) {
     auto upload_task = std::async(std::launch::async, [file_path, this]() {
-        std::lock_guard<std::mutex> lock(cache_mutex);
-        // 检查缓存中是否已存在
-        if (file_cache.find(file_path) == file_cache.end()) {
-            std::ofstream file_stream(file_path, std::ios::out);
-            if (file_stream.is_open()) {
-                std::string content = "This is a test file to simulate file upload.";
-                file_stream << content;
-                file_stream.close();
-                // 添加到缓存
-                file_cache[file_path] = content;
-                std::cout << "File uploaded and cached successfully: " << file_path << std::endl;
-            } else {
-                std::cerr << "Failed to open file for upload: " << file_path << std::endl;
-            }
-        } else {
-            std::cout << "File is already in cache, no need to upload: " << file_path << std::endl;
-        }
+      const size_t CHUNK_SIZE = 1024 * 1024; // 1MB
+      std::ifstream infile(file_path, std::ios::binary | std::ios::ate);
+      size_t file_size = infile.tellg();
+      infile.seekg(0, std::ios::beg);
+
+      // 读取断点续传的偏移量
+      size_t offset = 0;
+      std::ifstream offset_file(file_path + ".offset");
+      if (offset_file.is_open()) {
+          offset_file >> offset;
+          offset_file.close();
+      }
+      infile.seekg(offset, std::ios::beg);
+
+      std::lock_guard<std::mutex> lock(cache_mutex);
+
+      // 检查缓存中是否已存在
+      if (file_cache.find(file_path) == file_cache.end()) {
+          std::string content = "This is a test file to simulate file upload.";
+          file_cache[file_path] = content;
+      }
+
+      while (offset < file_size) {
+          size_t chunk_size = std::min(CHUNK_SIZE, file_size - offset);
+          std::vector<char> buffer(chunk_size);
+          infile.read(buffer.data(), chunk_size);
+
+          // 模拟上传
+          std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+          // 更新偏移量
+          offset += chunk_size;
+          std::cout << "Uploaded chunk of size " << chunk_size << " at offset " << offset << std::endl;
+
+          // 模拟断点续传
+          // 更新文件偏移量记录
+          std::ofstream offset_out_file(file_path + ".offset");
+          offset_out_file << offset;
+          offset_out_file.close();
+      }
+
+      infile.close();
+      std::remove((file_path + ".offset").c_str()); // 删除偏移量文件
+      std::cout << "File uploaded successfully: " << file_path << std::endl;
     });
 }
 
-// 修改后的async_download函数，添加缓存机制
+
 void http_conn::async_download(const std::string& file_path) {
     auto download_task = std::async(std::launch::async, [file_path, this]() {
-        std::lock_guard<std::mutex> lock(cache_mutex);
-        // 检查缓存中是否存在
-        auto it = file_cache.find(file_path);
-        if (it != file_cache.end()) {
-            // 直接从缓存中读取
-            std::cout << "File downloaded from cache: " << file_path << std::endl;
-            std::cout << "Content: \n" << it->second << std::endl;
-        } else {
-            std::ifstream file_stream(file_path, std::ios::in);
-            if (file_stream.is_open()) {
-                std::string content((std::istreambuf_iterator<char>(file_stream)),
-                                    (std::istreambuf_iterator<char>()));
-                file_stream.close();
-                // 添加到缓存
-                file_cache[file_path] = content;
-                std::cout << "File downloaded and cached successfully: " << file_path << std::endl;
-                std::cout << "Content: \n" << content << std::endl;
-            } else {
-                std::cerr << "Failed to open file for download: " << file_path << std::endl;
-            }
-        }
+      const size_t CHUNK_SIZE = 1024 * 1024; // 1MB
+      std::ofstream outfile(file_path, std::ios::binary | std::ios::ate);
+      size_t offset = outfile.tellp();
+
+      // 读取断点续传的偏移量
+      std::ifstream offset_file(file_path + ".offset");
+      if (offset_file.is_open()) {
+          offset_file >> offset;
+          offset_file.close();
+      }
+      outfile.seekp(offset, std::ios::beg);
+
+      std::lock_guard<std::mutex> lock(cache_mutex);
+
+      // 检查缓存中是否存在
+      auto it = file_cache.find(file_path);
+      if (it != file_cache.end()) {
+          std::string content = it->second;
+          size_t content_size = content.size();
+
+          while (offset < content_size) {
+              size_t chunk_size = std::min(CHUNK_SIZE, content_size - offset);
+              outfile.write(content.data() + offset, chunk_size);
+
+              // 模拟下载
+              std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+              // 更新偏移量
+              offset += chunk_size;
+              std::cout << "Downloaded chunk of size " << chunk_size << " at offset " << offset << std::endl;
+
+              // 模拟断点续传
+              // 更新文件偏移量记录
+              std::ofstream offset_out_file(file_path + ".offset");
+              offset_out_file << offset;
+              offset_out_file.close();
+          }
+
+          outfile.close();
+          std::remove((file_path + ".offset").c_str()); // 删除偏移量文件
+          std::cout << "File downloaded successfully: " << file_path << std::endl;
+      } else {
+          std::cerr << "Failed to find file in cache for download: " << file_path << std::endl;
+      }
     });
 }
+
 
 
 //TODO::初始化连接池
@@ -841,7 +891,7 @@ bool http_conn::process_write(HTTP_CODE ret)
                 return false;
         }
     }
-        case: HTTP_CODE::UPLOAD_REQUEST
+    case HTTP_CODE::UPLOAD_REQUEST:
         {
             add_status_line(200, ok_200_title);
             add_headers(strlen("File uploaded successfully!"));
@@ -849,7 +899,7 @@ bool http_conn::process_write(HTTP_CODE ret)
                 return false;
             break;
         }
-        case: HTTP_CODE::DOWNLOAD_REQUEST
+    case HTTP_CODE::DOWNLOAD_REQUEST:
         {
             add_status_line(200, ok_200_title);
             add_headers(strlen("File downloaded successfully!"));
