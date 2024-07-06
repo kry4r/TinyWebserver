@@ -40,7 +40,7 @@ public:
 private:
     std::deque<T> deq;
     size_t m_capacity;
-    std::mutex m_mutex;
+    mutable std::mutex m_mutex;
     bool isClose; 
     std::condition_variable Consumer;
     std::condition_variable Producer;

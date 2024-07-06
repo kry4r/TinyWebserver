@@ -7,6 +7,7 @@
 
 #include <map>
 #include <mutex>
+#include <regex>
 
 //定义http响应的一些状态信息
 const char *ok_200_title = "OK";
@@ -25,7 +26,73 @@ unordered_map<string, std::vector<string>> usersfiles;
 int http_conn::m_user_count = 0;
 int http_conn::m_epollfd = -1;
 
+void parse_and_save_file(const std::string& boundary, const std::string& data) {
+    std::vector<std::string> parts;
+    size_t pos = 0;
+    std::string delimiter = "--" + boundary;
+    std::string d = data;
 
+    while ((pos = d.find(delimiter)) != std::string::npos) {
+        std::string part = d.substr(0, pos);
+        if (!part.empty()) {
+            parts.push_back(part);
+        }
+        d.erase(0, pos + delimiter.length());
+    }
+
+    for (const auto& part : parts) {
+        std::istringstream stream(part);
+        std::string line;
+        std::string filename;
+        bool file_part = false;
+
+        while (std::getline(stream, line)) {
+            if (line.find("Content-Disposition") != std::string::npos) {
+                std::regex rgx_filename("filename=\"(.*)\"");
+                std::smatch match;
+                if (std::regex_search(line, match, rgx_filename)) {
+                    filename = match[1].str();
+                    file_part = true;
+                }
+            }
+            if (line == "\r" || line == "\n") {
+                break;
+            }
+        }
+
+        if (file_part && !filename.empty()) {
+            std::ofstream outfile(filename, std::ios::binary);
+            if (outfile.is_open()) {
+                std::istreambuf_iterator<char> eos;
+                std::istreambuf_iterator<char> start(stream);
+                std::vector<char> buffer(start, eos);
+                outfile.write(buffer.data(), buffer.size());
+                outfile.close();
+                std::cout << "File uploaded successfully: " << filename << std::endl;
+            } else {
+                std::cerr << "Failed to open file for writing: " << filename << std::endl;
+            }
+        }
+    }
+}
+
+void handle_upload(const std::unordered_map<std::string, std::string>& headers, const std::string& body) {
+    std::string boundary;
+    std::regex rgx("boundary=(.*)");
+    std::smatch match;
+
+    if (headers.find("Content-Type") != headers.end()) {
+        std::string content_type = headers.at("Content-Type");
+        if (std::regex_search(content_type, match, rgx)) {
+            boundary = match[1].str();
+        } else {
+            std::cerr << "No boundary found in Content-Type" << std::endl;
+            return;
+        }
+    }
+
+    parse_and_save_file(boundary, body);
+}
 
 void http_conn::async_upload(const std::string& file_path) {
     auto upload_task = std::async(std::launch::async, [file_path, this]() {
@@ -155,20 +222,6 @@ void http_conn::initmysql_result(connection_pool *connPool)
         users[temp1] = temp2;
     }
 
-    //在user表中检索username，passwd数据，浏览器端输入
-    if (mysql_query(mysql, "SELECT username,file,file FROM user"))
-    {
-        LOG_ERROR("SELECT error:%s\n", mysql_error(mysql));
-    }
-    result = mysql_store_result(mysql);
-    fields = mysql_fetch_fields(result);
-    while (MYSQL_ROW row = mysql_fetch_row(result))
-    {
-        string temp1(row[0]);
-        string temp2(row[1]);
-        usersfiles[temp1].push_back(temp2);
-    }
-
 }
 void http_conn::pick_one_sql_connect(connection_pool* connPool)
 {
@@ -250,9 +303,9 @@ void http_conn::init(int sockfd, const sockaddr_in &addr, char *root, int TRIGMo
     this->m_close_log = close_log;
     
 
-    strcpy_s(this->sql_user, user.c_str());
-    strcpy_s(this->sql_passwd, passwd.c_str());
-    strcpy_s(this->sql_name, sqlname.c_str());
+    strcpy(this->sql_user, user.c_str());
+    strcpy(this->sql_passwd, passwd.c_str());
+    strcpy(this->sql_name, sqlname.c_str());
     this->init();
 }
 
@@ -482,6 +535,23 @@ http_conn::HTTP_CODE http_conn::parse_headers(char *text)
         text += strspn(text, " \t");
         m_host = text;
     }
+    else if (strncasecmp(text, "Content-Type:", 13) == 0)
+    {
+        text += 13;
+        text += strspn(text, " \t");
+        std::string content_type = text;
+        m_headers["Content-Type"] = content_type;
+
+        // 使用正则表达式提取 boundary
+        std::regex rgx("boundary=(.*)");
+        std::smatch match;
+        if (std::regex_search(content_type, match, rgx)) {
+            std::string boundary = match[1].str();
+            m_headers["boundary"] = boundary;
+        } else {
+            LOG_ERROR("No boundary found in Content-Type");
+        }
+    }
     else
     {
         LOG_INFO("oop!unknow header: %s", text);
@@ -552,7 +622,7 @@ http_conn::HTTP_CODE http_conn::process_read()
 //TODO::生成响应
 http_conn::HTTP_CODE http_conn::do_request()
 {
-    strcpy_s(m_real_file, doc_root);
+    strcpy(m_real_file, doc_root);
     int len = strlen(doc_root);
     printf("m_url:%s\n", m_url);
     const char *p = strrchr(m_url, '/');
@@ -669,6 +739,10 @@ http_conn::HTTP_CODE http_conn::do_request()
         strcpy(m_url_real, "/disk.html");
         strncpy(m_real_file + len, m_url_real, strlen(m_url_real));
         free(m_url_real);
+    }
+    else if (*(p + 1) == '9')
+    {
+        handle_upload(m_headers, m_string);
     }
     else
         strncpy(m_real_file + len, m_url, FILENAME_LEN - len - 1);

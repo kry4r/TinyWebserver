@@ -107,6 +107,7 @@ public:
     void initmysql_result(connection_pool *connPool);
     //从数据库连接池取连接
     void pick_one_sql_connect(connection_pool *connPool);
+    void parse_headers(const char* text);
     int timer_flag;//是否关闭连接
     int improv;//是否正在处理数据中
 
@@ -195,6 +196,7 @@ private:
     char sql_user[100];
     char sql_passwd[100];
     char sql_name[100];
+    std::unordered_map<std::string, std::string> m_headers;
 };
 
 

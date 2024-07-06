@@ -132,8 +132,8 @@ int main() {
 
     //需要修改的数据库信息,登录名,密码,库名 
     std::string user = "root";
-    std::string passwd = "18861817269lwj";
-    std::string databasename = "webserDb";
+    std::string passwd = "123456";
+    std::string databasename = "dbtest";
     //命令行解析
     config m_config;
     m_config.parse_arg(argc, argv);
